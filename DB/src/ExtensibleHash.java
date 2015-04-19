@@ -1,0 +1,305 @@
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Hashtable;
+
+import javax.management.Query;
+
+public class ExtensibleHash {
+
+	ArrayList<String> prefix = new ArrayList<String>();
+	ArrayList<Bucket> buckets = new ArrayList<Bucket>();
+	Hashtable<String, Bucket> maps = new Hashtable<String, Bucket>();
+	final int BUCKET_SIZE = 2;
+
+	public ExtensibleHash() {
+		prefix.add("0");
+		prefix.add("1");
+		buckets.add(new Bucket());
+		buckets.add(new Bucket());
+	}
+	
+	private static String stringToBinary(String s) throws Exception{
+		byte[] infoBin = null;
+        infoBin = s.getBytes("UTF-8");
+        String binary = "";
+        for (byte b : infoBin) {
+             binary +=Integer.toBinaryString(b);
+             if ( binary.length() < 8 )
+            	  binary = "0" + binary;
+        }
+        return binary;
+    
+	}
+	public void hash(){
+		maps.clear();
+		for(int i = 0; i< prefix.size(); i++){
+			String key = prefix.get(i);
+			maps.put(key, buckets.get(i));
+		}
+	}
+
+	public void insertIndex(String index) throws Exception{
+		boolean inserted = false;
+		String[] splitIndex = index.split(",");
+		String bin = stringToBinary(splitIndex[0]);
+		for (int i = 0; i < prefix.size() && !inserted; i++) {
+			if (prefix.get(i)
+					.equals(bin.substring(0, prefix.get(i).length()))) {
+				if (buckets.get(i).bucket.size() < BUCKET_SIZE) {
+					buckets.get(i).bucket.add(index);
+					inserted = true;
+				} else {
+					elongate(i);
+					refresh(index);
+					break;
+				}
+			}
+		}
+		hash();
+	}
+
+	public void elongate(int prefixToElongate) {
+		ArrayList<String> newPrefix = new ArrayList<String>();
+		ArrayList<Bucket> newBuckets = new ArrayList<Bucket>();
+		for (int i = 0; i < prefix.size(); i++) {
+			if (i == prefixToElongate) {
+				String pre = prefix.get(i);
+				newPrefix.add(pre + "0");
+				newPrefix.add(pre + "1");
+				newBuckets.add(buckets.get(i));
+				newBuckets.add(new Bucket());
+			} else {
+				newPrefix.add(prefix.get(i));
+				newBuckets.add(buckets.get(i));
+			}
+		}
+		prefix = newPrefix;
+		buckets = newBuckets;
+
+	}
+	public void delete(String index) throws Exception{
+		boolean found = false;
+		String key = stringToBinary(index)+" ";	
+		while(!found&&key.length()>0){
+			key = key.substring(0,key.length()-1);
+			if(maps.containsKey(key)){
+				Bucket b = maps.get(key);
+				for(int j = 0; j<b.bucket.size();j++){
+					String column = b.bucket.get(j).split(",")[0];
+					if(column.equals(index)){
+						b.bucket.remove(j);
+					}
+				}
+			 	found = true;
+			}
+		
+		}
+	}
+	public String search(String s) throws Exception{//get index of s
+		//String bin = stringToBinary(s);
+		boolean found = false;
+		String key = stringToBinary(s)+" ";	
+		while(!found&&key.length()>0){
+			key = key.substring(0,key.length()-1);
+			if(maps.containsKey(key)){
+				Bucket b = maps.get(key);
+				for(int j = 0; j<b.bucket.size();j++){
+					String column = b.bucket.get(j).split(",")[0];
+					if(column.equals(s)){
+						return b.bucket.get(j);
+					}
+				}
+			 	found = true;
+			}
+		
+		}
+		return "";
+	}
+
+	public void refresh(String index) throws Exception{
+		ArrayList<String> indices = new ArrayList<String>();
+		for (int i = 0; i < prefix.size(); i++) {
+			int j = 0;
+			while (j < buckets.get(i).bucket.size()) {
+				String bin = stringToBinary(buckets.get(i).bucket.get(j));
+				if (!prefix.get(i).equals(
+						bin.substring(0,
+								prefix.get(i).length()))) {
+					indices.add(buckets.get(i).bucket.get(j));
+					buckets.get(i).bucket.remove(j);
+					j = 0;
+				}else j++;
+			}
+		}
+		while (!indices.isEmpty()) {
+			insertIndex(indices.remove(0));
+		}
+		insertIndex(index);
+	}
+	
+	
+	public void commandPattern(String query) throws Exception
+	{
+		int currentLocInQuery;
+		String [] queryLine = query.split(" ");
+		String [] col = null;
+		String [] val = null;
+		String [] operator = null;
+		Hashtable<String, String> h = new Hashtable<String,String>();
+		// INSERTION
+		// base case "insert into tableN col1 values val1"
+		if (queryLine[0].equalsIgnoreCase("insert") && queryLine[1].equalsIgnoreCase("into"))
+		{
+			if (Table.strTableName.equalsIgnoreCase(queryLine[2]))
+			{
+				if (Table.index.contains(queryLine[3]) && 
+						queryLine[4].equalsIgnoreCase("values"))
+				{
+				h.put(queryLine[3], queryLine[5]);
+				DBApp.insertIntoTable(queryLine[2],h);
+				h.clear();
+				}
+				//general case "insert into tableN col1 col2 values val1 val2"
+				
+				for (int i = 3; i < queryLine.length; i++)
+				{
+					currentLocInQuery = 3;
+					if (queryLine[i].equalsIgnoreCase("values"))
+					{
+						col = Arrays.copyOfRange(queryLine, currentLocInQuery, i-1);
+						val = Arrays.copyOfRange(queryLine, i+1, queryLine.length-1);
+					}
+					
+				}
+				for (int j = 0; j < col.length; j++)
+				{
+					if (Table.index.contains(col[j]))
+					{
+					h.put(col[j], val[j]);
+					DBApp.insertIntoTable(queryLine[2], h);
+					h.clear();
+					}
+					else
+					{
+						System.out.print("Column not found");
+						break;
+					}
+				}
+				col = null;
+				val = null;
+			}
+			
+				
+		}
+		//DELETION
+		//base case "delete from tableN where col1 = val1"
+		if (queryLine[0].equalsIgnoreCase("delete") && queryLine[1].equalsIgnoreCase("from"))
+			{
+			if (Table.strTableName.equalsIgnoreCase(queryLine[2]))
+			{
+				if (queryLine[3].equalsIgnoreCase("where") && Table.index.contains(queryLine[4])) 
+				{
+					h.put(queryLine[4], queryLine[5]);
+					DBApp.deleteFromTable(queryLine[2], h, "");
+					h.clear();
+				}
+				//general case "delete from tableN where col1 = val1 and|or col2 = val2" 
+				currentLocInQuery = 3;
+				int index = 0;
+				for (int i = 3; i < queryLine.length; i++)
+				{
+					if (queryLine[3].equalsIgnoreCase("where"))
+					{
+						for (int m = 4; m < queryLine.length; m++)
+						{
+							if (Table.index.contains(queryLine[m]))
+							{
+								if (queryLine[m+1].equals("="))
+								{
+									col[index] = queryLine[m];
+									val[index] = queryLine[m+2];
+									index++;
+									//h.put(queryLine[m],queryLine[m+2]);
+									currentLocInQuery = m+3;
+									if (queryLine[currentLocInQuery].equalsIgnoreCase("and")
+											||queryLine[currentLocInQuery].equalsIgnoreCase("or"))
+									{
+										operator[index] = queryLine[currentLocInQuery];
+									}
+								}
+							}
+						}
+					}
+					else 
+					{
+						System.out.print("Wrong Query");
+					}
+					
+				}
+				for (int j = 0; j < col.length; j++)
+				{
+					h.put(col[j], val[j]);
+					DBApp.deleteFromTable(queryLine[2], h, operator[j]);
+					h.clear();
+				}
+				
+			}
+			
+		}
+		
+	}
+	
+	
+	
+	//main method to test string to binary converter
+//	public static void main(String[] args) throws Exception {
+//		String s = "2";
+//		System.out.println(stringToBinary(s));
+//	}
+//main method to test insertion
+//	public static void main(String[] args) throws Exception{
+//		ExtensibleHash t = new ExtensibleHash();
+//		t.insertIndex("0000");
+//		t.insertIndex("0001");
+//		t.insertIndex("0010,1");
+//		t.insertIndex("0011");
+////		t.insertIndex("0100");
+////		t.insertIndex("0101");
+////		t.insertIndex("0110");
+////		t.insertIndex("0111");
+////		t.insertIndex("1000");
+////		t.insertIndex("1001");
+////		t.insertIndex("1010");
+////		t.insertIndex("1011");
+////		t.insertIndex("1100");
+////		t.insertIndex("1101");
+////		t.insertIndex("1110");
+////		t.insertIndex("1111");
+//
+////		for (int i = 0; i < t.prefix.size(); i++) {
+////			System.out.println("      ---");
+////			if (t.buckets.get(i).bucket.size() > 0) {
+////				System.out.println("     " + t.buckets.get(i).bucket.get(0));
+////			} else
+////				System.out.println("     null");
+////			System.out.println("     ---");
+////			if (t.buckets.get(i).bucket.size() > 1) {
+////				System.out.println(t.prefix.get(i)+"->" + t.buckets.get(i).bucket.get(1));
+////			} else
+////				System.out.println("     null");
+////			System.out.println("      ---");
+////			if (t.buckets.get(i).bucket.size() > 2) {
+////				System.out.println("     " + t.buckets.get(i).bucket.get(2));
+////			} else
+////				System.out.println("     null");
+////			System.out.println("      ---");
+////
+////			System.out.println();
+////
+////		}
+//	//	t.delete("0110");
+//		//t.delete("0010");
+//		System.out.println(t.search("0010"));
+//		System.out.println(t.maps.toString());
+//	}
+}

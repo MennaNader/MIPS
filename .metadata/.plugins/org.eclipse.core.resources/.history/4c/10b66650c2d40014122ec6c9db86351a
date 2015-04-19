@@ -1,0 +1,10 @@
+
+public class DBEngineException extends Exception {
+	public DBEngineException(){
+		super();
+	}
+
+	public DBEngineException(String m){
+		super(m);
+	}
+}
